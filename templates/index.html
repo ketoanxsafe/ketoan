@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đối Chiếu Hóa Đơn Nhập Hàng</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Smooth transition */
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .drag-over {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen text-gray-800">
+
+    <!-- Navbar -->
+    <nav class="bg-blue-900 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-3.5 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-scale-balanced text-2xl text-blue-300"></i>
+                <span class="text-xl font-bold tracking-wide">HỆ THỐNG ĐỐI CHIẾU HÓA ĐƠN NHẬP HÀNG</span>
+            </div>
+            <div class="flex items-center space-x-2 text-sm text-blue-200">
+                <i class="fa-regular fa-clock"></i>
+                <span id="current-time">26/08/2026</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 py-8">
+
+        <!-- 1. Upload Panel -->
+        <div id="upload-panel" class="bg-white rounded-xl shadow-md p-6 max-w-3xl mx-auto transition-all duration-300">
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-800">Tải Lên Nguồn Dữ Liệu Đối Chiếu</h2>
+                <p class="text-sm text-gray-500 mt-1">Chọn hoặc kéo thả 3 file nguồn Excel (.xlsx) bên dưới để hệ thống tự động chạy đối chiếu.</p>
+            </div>
+
+            <form id="upload-form" class="space-y-6">
+                <!-- Sapo File -->
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-5 hover:border-blue-500 transition-colors duration-150 relative bg-gray-50 drop-zone" id="drop-sapo">
+                    <div class="flex items-center space-x-4">
+                        <div class="p-3 bg-blue-100 rounded-full text-blue-600">
+                            <i class="fa-solid fa-file-invoice-dollar text-2xl"></i>
+                        </div>
+                        <div class="flex-1">
+                            <label class="block text-sm font-semibold text-gray-700">1. File chi tiết đơn nhập hàng (Sapo)</label>
+                            <span class="text-xs text-gray-500 file-name-display block mt-0.5">Kéo thả file hoặc click để chọn</span>
+                            <input type="file" name="sapo_file" class="hidden file-input" accept=".xlsx" required>
+                        </div>
+                        <button type="button" class="btn-select text-sm font-medium text-blue-600 hover:text-blue-800">Chọn file</button>
+                    </div>
+                </div>
+
+                <!-- Supplier File -->
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-5 hover:border-blue-500 transition-colors duration-150 relative bg-gray-50 drop-zone" id="drop-supplier">
+                    <div class="flex items-center space-x-4">
+                        <div class="p-3 bg-indigo-100 rounded-full text-indigo-600">
+                            <i class="fa-solid fa-address-book text-2xl"></i>
+                        </div>
+                        <div class="flex-1">
+                            <label class="block text-sm font-semibold text-gray-700">2. File danh sách nhà cung cấp (Sapo)</label>
+                            <span class="text-xs text-gray-500 file-name-display block mt-0.5">Kéo thả file hoặc click để chọn (dùng đối chiếu MST)</span>
+                            <input type="file" name="supplier_file" class="hidden file-input" accept=".xlsx" required>
+                        </div>
+                        <button type="button" class="btn-select text-sm font-medium text-blue-600 hover:text-blue-800">Chọn file</button>
+                    </div>
+                </div>
+
+                <!-- Invoice File -->
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-5 hover:border-blue-500 transition-colors duration-150 relative bg-gray-50 drop-zone" id="drop-invoice">
+                    <div class="flex items-center space-x-4">
+                        <div class="p-3 bg-emerald-100 rounded-full text-emerald-600">
+                            <i class="fa-solid fa-receipt text-2xl"></i>
+                        </div>
+                        <div class="flex-1">
+                            <label class="block text-sm font-semibold text-gray-700">3. File hóa đơn mua vào (Tổng cục Thuế)</label>
+                            <span class="text-xs text-gray-500 file-name-display block mt-0.5">Kéo thả file hoặc click để chọn (hóa đơn NCC đã xuất)</span>
+                            <input type="file" name="invoice_file" class="hidden file-input" accept=".xlsx" required>
+                        </div>
+                        <button type="button" class="btn-select text-sm font-medium text-blue-600 hover:text-blue-800">Chọn file</button>
+                    </div>
+                </div>
+
+                <!-- Note -->
+                <div class="bg-amber-50 border-l-4 border-amber-500 p-4 text-sm text-amber-800 rounded-r-lg">
+                    <p class="font-semibold"><i class="fa-solid fa-triangle-exclamation mr-1.5"></i>Lưu ý về quy đổi thuế VAT:</p>
+                    <p class="mt-1">Hệ thống sẽ tự động đối chiếu bằng cách trừ số tiền <strong>Thuế</strong> của Sapo (file đã có thuế) để so khớp trực tiếp với giá trị <strong>chưa thuế</strong> của tệp Hóa đơn Tổng cục Thuế.</p>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" id="btn-submit" class="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition duration-150 flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-circle-play"></i>
+                    <span>Bắt Đầu Đối Chiếu Dữ Liệu</span>
+                </button>
+            </form>
+        </div>
+
+        <!-- 2. Loading State -->
+        <div id="loading-panel" class="hidden text-center py-20">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-900 border-t-transparent mb-4"></div>
+            <h3 class="text-lg font-bold text-gray-800">Đang đối chiếu dữ liệu...</h3>
+            <p class="text-sm text-gray-500 mt-1">Hệ thống đang trích xuất mã sản phẩm, phân tích thông tin MST và chạy thuật toán so khớp chuỗi mờ.</p>
+        </div>
+
+        <!-- 3. Dashboard Result Panel -->
+        <div id="result-panel" class="hidden space-y-6 transition-all duration-300">
+            
+            <!-- Header bar with export actions -->
+            <div class="flex flex-col md:flex-row md:justify-between md:items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <i class="fa-solid fa-square-poll-vertical mr-2 text-blue-700"></i>
+                        Kết Quả Đối Chiếu Hóa Đơn Nhập Hàng
+                    </h2>
+                    <p class="text-xs text-gray-500 mt-0.5">Dữ liệu được so khớp bằng thuật toán FIFO và Chuỗi mờ thông minh.</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <form action="/export" method="POST" id="export-form">
+                        <button type="submit" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow flex items-center space-x-2 transition">
+                            <i class="fa-solid fa-file-excel"></i>
+                            <span>Tải Báo Cáo Excel</span>
+                        </button>
+                    </form>
+                    <button onclick="resetUpload()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold border border-gray-300 transition flex items-center space-x-2">
+                        <i class="fa-solid fa-arrow-rotate-left"></i>
+                        <span>Tải Lên Lại</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-200 flex flex-col justify-between">
+                    <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tổng Đơn Nhập</span>
+                    <span class="text-3xl font-extrabold text-gray-800 mt-2" id="stat-total">0</span>
+                    <span class="text-xs text-gray-400 mt-1">Đơn hàng nhập từ Sapo</span>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-200 flex flex-col justify-between border-l-4 border-l-green-500">
+                    <span class="text-xs font-semibold text-green-600 uppercase tracking-wider">Đã Khớp Khít</span>
+                    <span class="text-3xl font-extrabold text-green-700 mt-2" id="stat-khop">0</span>
+                    <span class="text-xs text-gray-400 mt-1">100% khớp hóa đơn</span>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-200 flex flex-col justify-between border-l-4 border-l-amber-500">
+                    <span class="text-xs font-semibold text-amber-600 uppercase tracking-wider">Lệch Giá / SL</span>
+                    <span class="text-3xl font-extrabold text-amber-700 mt-2" id="stat-lech">0</span>
+                    <span class="text-xs text-gray-400 mt-1">Có sai số về tiền hoặc SL</span>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-200 flex flex-col justify-between border-l-4 border-l-red-500">
+                    <span class="text-xs font-semibold text-red-600 uppercase tracking-wider">Chưa Có Hóa Đơn</span>
+                    <span class="text-3xl font-extrabold text-red-700 mt-2" id="stat-chua-hd">0</span>
+                    <span class="text-xs text-gray-400 mt-1">Không thấy hóa đơn của NCC</span>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-200 flex flex-col justify-between border-l-4 border-l-gray-400">
+                    <span class="text-xs font-semibold text-gray-600 uppercase tracking-wider">Thiếu MST NCC</span>
+                    <span class="text-3xl font-extrabold text-gray-700 mt-2" id="stat-thieu-mst">0</span>
+                    <span class="text-xs text-gray-400 mt-1">Cần bổ sung MST trên Sapo</span>
+                </div>
+            </div>
+
+            <!-- Tab Navigation & Visual Chart -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Doughnut Chart Card -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex flex-col items-center justify-center">
+                    <h3 class="text-sm font-bold text-gray-700 mb-4 self-start">TỶ LỆ ĐỐI CHIẾU</h3>
+                    <div class="w-48 h-48">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Tabs Container -->
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col justify-between">
+                    <div class="border-b border-gray-200 bg-gray-50 flex">
+                        <button onclick="switchTab('tab-orders')" id="btn-tab-orders" class="px-5 py-3.5 text-sm font-bold border-b-2 border-blue-700 text-blue-700 flex items-center space-x-2">
+                            <i class="fa-solid fa-list-check"></i>
+                            <span>Danh Sách Đơn Nhập</span>
+                        </button>
+                        <button onclick="switchTab('tab-unmatched-inv')" id="btn-tab-unmatched-inv" class="px-5 py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 border-b-2 border-transparent flex items-center space-x-2">
+                            <i class="fa-solid fa-circle-exclamation text-amber-500"></i>
+                            <span>Hóa Đơn Thừa TCT <span id="unmatched-inv-count" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full ml-1">0</span></span>
+                        </button>
+                    </div>
+
+                    <div class="p-5 flex-1">
+                        <!-- Tab 1: Orders -->
+                        <div id="tab-orders" class="tab-content active space-y-4">
+                            <!-- Filter Toolbar -->
+                            <div class="flex flex-col sm:flex-row gap-3">
+                                <div class="relative flex-1">
+                                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-gray-400"></i>
+                                    <input type="text" id="search-orders" placeholder="Tìm kiếm mã đơn, nhà cung cấp, MST..." class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                                </div>
+                                <div class="flex gap-2">
+                                    <select id="filter-status" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                        <option value="ALL">Tất cả trạng thái</option>
+                                        <option value="Khớp">Đã Khớp</option>
+                                        <option value="Lệch">Lệch</option>
+                                        <option value="Chưa xuất hóa đơn">Chưa xuất hóa đơn</option>
+                                        <option value="Thiếu MST">Thiếu MST</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Table -->
+                            <div class="overflow-x-auto rounded-lg border border-gray-200 max-h-[400px] overflow-y-auto">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="bg-gray-50 text-xs text-gray-700 uppercase sticky top-0 border-b border-gray-200">
+                                        <tr>
+                                            <th class="px-4 py-3">Mã đơn nhập</th>
+                                            <th class="px-4 py-3">Ngày nhập</th>
+                                            <th class="px-4 py-3">Nhà cung cấp</th>
+                                            <th class="px-4 py-3 text-right">Tổng tiền (Sapo)</th>
+                                            <th class="px-4 py-3 text-center">Trạng thái</th>
+                                            <th class="px-4 py-3">Ghi chú</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="orders-table-body">
+                                        <!-- Dynamic content -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2: Unmatched Invoices -->
+                        <div id="tab-unmatched-inv" class="tab-content space-y-4">
+                            <div class="bg-amber-50 border-l-4 border-amber-500 p-4 text-xs text-amber-800 rounded-r-lg">
+                                <p><i class="fa-solid fa-lightbulb mr-1.5"></i>Đây là các mặt hàng có hóa đơn từ Tổng cục Thuế nhưng hệ thống không tìm thấy đơn nhập tương ứng trên Sapo trong tệp tải lên (có thể bị bỏ quên chưa nhập kho Sapo hoặc nhập nhầm NCC).</p>
+                            </div>
+                            
+                            <div class="overflow-x-auto rounded-lg border border-gray-200 max-h-[350px] overflow-y-auto">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="bg-gray-50 text-xs text-gray-700 uppercase sticky top-0 border-b border-gray-200">
+                                        <tr>
+                                            <th class="px-4 py-3">Số HĐ</th>
+                                            <th class="px-4 py-3">Ngày HĐ</th>
+                                            <th class="px-4 py-3">Nhà cung cấp / MST</th>
+                                            <th class="px-4 py-3">Tên hàng hóa (Hóa đơn)</th>
+                                            <th class="px-4 py-3 text-center">SL</th>
+                                            <th class="px-4 py-3 text-right">Đơn giá</th>
+                                            <th class="px-4 py-3 text-right">Thành tiền</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="unmatched-inv-table-body">
+                                        <!-- Dynamic content -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Detail Modal -->
+        <div id="detail-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden">
+                <!-- Modal Header -->
+                <div class="bg-blue-900 text-white px-6 py-4 flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold flex items-center">
+                            <i class="fa-solid fa-magnifying-glass-chart mr-2"></i>
+                            Chi Tiết Đối Chiếu Mặt Hàng Đơn: <span id="modal-order-id" class="ml-1 text-yellow-300 font-mono">PONxxxxx</span>
+                        </h3>
+                        <p class="text-xs text-blue-200 mt-0.5" id="modal-order-meta">NCC: CSPS | Ngày nhập: 24/08/2026</p>
+                    </div>
+                    <button onclick="closeModal()" class="text-white hover:text-gray-300 text-2xl">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="p-6 overflow-y-auto space-y-4 flex-1">
+                    <div class="flex justify-between items-center text-xs text-gray-500">
+                        <span>Lưu ý: Đơn giá Sapo hiển thị đã được <strong>khấu trừ thuế VAT</strong> thực tế để khớp với đơn giá chưa VAT trên Hóa đơn.</span>
+                        <div class="flex space-x-3">
+                            <span class="flex items-center"><span class="w-3 h-3 bg-red-100 border border-red-300 rounded mr-1"></span> Lệch dữ liệu</span>
+                            <span class="flex items-center"><span class="w-3 h-3 bg-green-100 border border-green-300 rounded mr-1"></span> Khớp hoàn hảo</span>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="w-full text-xs text-left">
+                            <thead class="bg-gray-100 text-gray-700 uppercase border-b border-gray-200">
+                                <tr>
+                                    <th class="px-3 py-3" colspan="4" style="background-color: #f1f5f9; border-right: 2px solid #cbd5e1;">DỮ LIỆU NHẬP KHO SAPO (ĐÃ TRỪ VAT)</th>
+                                    <th class="px-3 py-3" colspan="4" style="background-color: #ecfdf5; border-right: 2px solid #cbd5e1;">HÓA ĐƠN ĐỐI CHIẾU (TỔNG CỤC THUẾ)</th>
+                                    <th class="px-3 py-3" colspan="2" style="background-color: #fef3c7;">SAI LỆCH</th>
+                                </tr>
+                                <tr class="bg-gray-50 border-b border-gray-200">
+                                    <!-- Sapo -->
+                                    <th class="px-3 py-2">Mã SKU</th>
+                                    <th class="px-3 py-2">Tên hàng hóa (Sapo)</th>
+                                    <th class="px-3 py-2 text-center">SL</th>
+                                    <th class="px-3 py-2 text-right" style="border-right: 2px solid #cbd5e1;">Đơn giá</th>
+                                    <!-- Invoices -->
+                                    <th class="px-3 py-2">Số HĐ</th>
+                                    <th class="px-3 py-2">Tên hàng hóa (Hóa đơn)</th>
+                                    <th class="px-3 py-2 text-center">SL</th>
+                                    <th class="px-3 py-2 text-right" style="border-right: 2px solid #cbd5e1;">Đơn giá</th>
+                                    <!-- Diff -->
+                                    <th class="px-3 py-2 text-center">SL</th>
+                                    <th class="px-3 py-2 text-right">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modal-items-body">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="bg-gray-50 px-6 py-3 border-t border-gray-200 flex justify-end">
+                    <button onclick="closeModal()" class="bg-blue-800 hover:bg-blue-900 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                        Đóng chi tiết
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Scripting -->
+    <script>
+        // Global variables
+        let reconData = null;
+        let chartInstance = null;
+
+        // Current time format
+        document.getElementById('current-time').innerText = new Date().toLocaleString('vi-VN', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        // Initialize drag-drop functionality
+        document.querySelectorAll('.drop-zone').forEach(zone => {
+            const input = zone.querySelector('.file-input');
+            const selectBtn = zone.querySelector('.btn-select');
+            const fileDisplay = zone.querySelector('.file-name-display');
+
+            // Select button handler
+            selectBtn.addEventListener('click', () => input.click());
+
+            // Input change handler
+            input.addEventListener('change', () => {
+                if (input.files.length > 0) {
+                    fileDisplay.innerText = `Selected: ${input.files[0].name}`;
+                    fileDisplay.classList.remove('text-gray-500');
+                    fileDisplay.classList.add('text-blue-700', 'font-semibold');
+                    zone.classList.add('border-blue-500', 'bg-blue-50');
+                }
+            });
+
+            // Drag and drop handlers
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('drag-over');
+            });
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('drag-over');
+            });
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length > 0) {
+                    const dt = new DataTransfer();
+                    dt.items.add(e.dataTransfer.files[0]);
+                    input.files = dt.files;
+                    fileDisplay.innerText = `Selected: ${input.files[0].name}`;
+                    fileDisplay.classList.remove('text-gray-500');
+                    fileDisplay.classList.add('text-blue-700', 'font-semibold');
+                    zone.classList.add('border-blue-500', 'bg-blue-50');
+                }
+            });
+        });
+
+        // Upload Form submit handler
+        document.getElementById('upload-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            document.getElementById('upload-panel').classList.add('hidden');
+            document.getElementById('loading-panel').classList.remove('hidden');
+
+            fetch('/reconcile', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error || 'Lỗi hệ thống') });
+                }
+                return response.json();
+            })
+            .then(data => {
+                reconData = data;
+                document.getElementById('loading-panel').classList.add('hidden');
+                document.getElementById('result-panel').classList.remove('hidden');
+                
+                renderDashboard();
+            })
+            .catch(error => {
+                alert(error.message);
+                document.getElementById('loading-panel').classList.add('hidden');
+                document.getElementById('upload-panel').classList.remove('hidden');
+            });
+        });
+
+        // Render dashboard values, tables, and chart
+        function renderDashboard() {
+            // Stats
+            document.getElementById('stat-total').innerText = reconData.stats.total;
+            document.getElementById('stat-khop').innerText = reconData.stats.khop;
+            document.getElementById('stat-lech').innerText = reconData.stats.lech;
+            document.getElementById('stat-chua-hd').innerText = reconData.stats.chua_hd;
+            document.getElementById('stat-thieu-mst').innerText = reconData.stats.thieu_mst;
+
+            // Surplus Invoice Count
+            document.getElementById('unmatched-inv-count').innerText = reconData.unmatched_invoices.length;
+
+            // Render Orders Table
+            renderOrdersTable();
+
+            // Render Unmatched Invoices Table
+            renderUnmatchedInvoicesTable();
+
+            // Render Doughnut Chart
+            renderChart();
+        }
+
+        // Render Sapo Orders list
+        function renderOrdersTable() {
+            const tableBody = document.getElementById('orders-table-body');
+            const searchVal = document.getElementById('search-orders').value.toLowerCase();
+            const filterVal = document.getElementById('filter-status').value;
+
+            tableBody.innerHTML = '';
+            
+            const filteredOrders = reconData.orders.filter(order => {
+                const matchesSearch = 
+                    order.order_id.toLowerCase().includes(searchVal) ||
+                    order.supplier_name.toLowerCase().includes(searchVal) ||
+                    order.supplier_code.toLowerCase().includes(searchVal) ||
+                    (order.mst && order.mst.includes(searchVal));
+                
+                const matchesStatus = filterVal === 'ALL' || order.status === filterVal;
+                
+                return matchesSearch && matchesStatus;
+            });
+
+            if (filteredOrders.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-400">Không tìm thấy đơn nhập hàng nào phù hợp.</td></tr>`;
+                return;
+            }
+
+            filteredOrders.forEach(order => {
+                let badgeClass = '';
+                if (order.status === 'Khớp') badgeClass = 'bg-green-100 text-green-800 border-green-200';
+                else if (order.status === 'Lệch') badgeClass = 'bg-amber-100 text-amber-800 border-amber-200';
+                else if (order.status === 'Chưa xuất hóa đơn') badgeClass = 'bg-red-100 text-red-800 border-red-200';
+                else badgeClass = 'bg-gray-100 text-gray-800 border-gray-200';
+
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 border-b border-gray-100 cursor-pointer transition';
+                row.onclick = () => showOrderDetail(order.order_id);
+                
+                row.innerHTML = `
+                    <td class="px-4 py-3 font-semibold text-blue-900 font-mono">${order.order_id}</td>
+                    <td class="px-4 py-3 text-gray-500">${order.date}</td>
+                    <td class="px-4 py-3">
+                        <div class="font-medium text-gray-800">${order.supplier_name}</div>
+                        <div class="text-xs text-gray-400 font-mono">${order.supplier_code} ${order.mst ? ' | MST: ' + order.mst : ''}</div>
+                    </td>
+                    <td class="px-4 py-3 text-right font-bold text-gray-900">${formatCurrency(order.total_incl)} đ</td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}">
+                            ${order.status}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-gray-500 max-w-xs truncate">${order.notes || ''}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        // Render Unmatched Invoices list
+        function renderUnmatchedInvoicesTable() {
+            const tableBody = document.getElementById('unmatched-inv-table-body');
+            tableBody.innerHTML = '';
+
+            if (reconData.unmatched_invoices.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-400">Không có hóa đơn thừa nào. Tất cả hóa đơn đã khớp vào đơn hàng Sapo!</td></tr>`;
+                return;
+            }
+
+            reconData.unmatched_invoices.forEach(inv => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 border-b border-gray-100';
+                row.innerHTML = `
+                    <td class="px-4 py-3 font-semibold font-mono text-gray-800">${inv.invoice_no}</td>
+                    <td class="px-4 py-3 text-gray-500">${inv.date}</td>
+                    <td class="px-4 py-3">
+                        <div class="font-medium text-gray-800">${inv.supplier_name}</div>
+                        <div class="text-xs text-gray-400 font-mono">MST: ${inv.mst}</div>
+                    </td>
+                    <td class="px-4 py-3 text-xs font-medium text-gray-700">${inv.name}</td>
+                    <td class="px-4 py-3 text-center font-semibold text-gray-600">${inv.qty}</td>
+                    <td class="px-4 py-3 text-right text-gray-600">${formatCurrency(inv.price)} đ</td>
+                    <td class="px-4 py-3 text-right font-bold text-gray-800">${formatCurrency(inv.total)} đ</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        // Switch Tabs
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+
+            const btnOrders = document.getElementById('btn-tab-orders');
+            const btnUnmatched = document.getElementById('btn-tab-unmatched-inv');
+
+            if (tabId === 'tab-orders') {
+                btnOrders.className = 'px-5 py-3.5 text-sm font-bold border-b-2 border-blue-700 text-blue-700 flex items-center space-x-2';
+                btnUnmatched.className = 'px-5 py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 border-b-2 border-transparent flex items-center space-x-2';
+            } else {
+                btnUnmatched.className = 'px-5 py-3.5 text-sm font-bold border-b-2 border-blue-700 text-blue-700 flex items-center space-x-2';
+                btnOrders.className = 'px-5 py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 border-b-2 border-transparent flex items-center space-x-2';
+            }
+        }
+
+        // Render Pie Chart for stats
+        function renderChart() {
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Đã Khớp', 'Lệch', 'Chưa có HĐ', 'Thiếu MST'],
+                    datasets: [{
+                        data: [
+                            reconData.stats.khop,
+                            reconData.stats.lech,
+                            reconData.stats.chua_hd,
+                            reconData.stats.thieu_mst
+                        ],
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#9ca3af'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                boxWidth: 12,
+                                font: { size: 11 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Show detailed items modal of an order
+        function showOrderDetail(orderId) {
+            const order = reconData.orders.find(o => o.order_id === orderId);
+            const items = reconData.items.filter(it => it.order_id === orderId);
+
+            document.getElementById('modal-order-id').innerText = orderId;
+            document.getElementById('modal-order-meta').innerText = `NCC: ${order.supplier_name} (${order.supplier_code}) | Mã số thuế: ${order.mst || 'Thiếu'} | Ngày nhập: ${order.date}`;
+
+            const itemsBody = document.getElementById('modal-items-body');
+            itemsBody.innerHTML = '';
+
+            items.forEach(item => {
+                const tr = document.createElement('tr');
+                
+                // Color row depending on matching status
+                let rowBg = '';
+                if (item.status.includes('Khớp')) {
+                    rowBg = 'bg-green-50 hover:bg-green-100 border-green-200';
+                } else if (item.status.includes('Lệch')) {
+                    rowBg = 'bg-amber-50 hover:bg-amber-100 border-amber-200';
+                } else {
+                    rowBg = 'bg-red-50 hover:bg-red-100 border-red-200';
+                }
+                tr.className = `border-b ${rowBg}`;
+
+                // Sapo values
+                const sapoSku = item.sku || 'N/A';
+                const sapoName = item.name;
+                const sapoQty = item.qty;
+                const sapoPrice = item.price_excl;
+
+                // Invoice values
+                const invNo = item.invoice_no || '-';
+                const invName = item.inv_name || '-';
+                const invQty = item.inv_qty || 0;
+                const invPrice = item.inv_price || 0.0;
+
+                // Diff values
+                const diffQty = item.diff_qty;
+                const diffAmt = item.diff_amt;
+                
+                // Check highlight columns if diff
+                const qtyDiffClass = diffQty !== 0 ? 'text-red-700 font-bold' : 'text-gray-500';
+                const priceDiff = invPrice - sapoPrice;
+                const priceDiffClass = Math.abs(priceDiff) >= 5.0 ? 'text-red-700 font-bold' : 'text-gray-500';
+                const amtDiffClass = Math.abs(diffAmt) >= 10.0 ? 'text-red-700 font-bold' : 'text-gray-500';
+
+                tr.innerHTML = `
+                    <!-- Sapo -->
+                    <td class="px-3 py-2.5 font-mono text-gray-500">${sapoSku}</td>
+                    <td class="px-3 py-2.5 font-medium max-w-xs truncate" title="${sapoName}">${sapoName}</td>
+                    <td class="px-3 py-2.5 text-center font-bold text-gray-700">${sapoQty}</td>
+                    <td class="px-3 py-2.5 text-right font-medium" style="border-right: 2px solid #cbd5e1;">${formatCurrency(sapoPrice)} đ</td>
+                    
+                    <!-- Invoice -->
+                    <td class="px-3 py-2.5 font-mono text-gray-600">${invNo}</td>
+                    <td class="px-3 py-2.5 max-w-xs truncate text-gray-600" title="${invName}">${invName}</td>
+                    <td class="px-3 py-2.5 text-center font-bold text-gray-600">${invNo !== '-' ? invQty : ''}</td>
+                    <td class="px-3 py-2.5 text-right font-medium" style="border-right: 2px solid #cbd5e1;">${invNo !== '-' ? formatCurrency(invPrice) + ' đ' : '-'}</td>
+                    
+                    <!-- Diff -->
+                    <td class="px-3 py-2.5 text-center ${qtyDiffClass}">${invNo !== '-' ? (diffQty > 0 ? '+' : '') + diffQty : ''}</td>
+                    <td class="px-3 py-2.5 text-right font-bold ${amtDiffClass}">${formatCurrency(diffAmt)} đ</td>
+                `;
+
+                itemsBody.appendChild(tr);
+            });
+
+            document.getElementById('detail-modal').classList.remove('hidden');
+        }
+
+        // Close detailed items modal
+        function closeModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+
+        // Reset system to Upload Panel
+        function resetUpload() {
+            document.getElementById('upload-form').reset();
+            
+            // reset file displays
+            document.querySelectorAll('.file-name-display').forEach(span => {
+                span.innerText = 'Kéo thả file hoặc click để chọn';
+                span.classList.remove('text-blue-700', 'font-semibold');
+                span.classList.add('text-gray-500');
+            });
+            document.querySelectorAll('.drop-zone').forEach(zone => {
+                zone.className = 'border-2 border-dashed border-gray-300 rounded-lg p-5 hover:border-blue-500 transition-colors duration-150 relative bg-gray-50 drop-zone';
+            });
+
+            document.getElementById('result-panel').classList.add('hidden');
+            document.getElementById('upload-panel').classList.remove('hidden');
+            reconData = null;
+        }
+
+        // Helper currency formatter
+        function formatCurrency(num) {
+            if (num === undefined || num === null) return '0';
+            return Math.round(num).toLocaleString('vi-VN');
+        }
+
+        // Search and filter listeners
+        document.getElementById('search-orders').addEventListener('input', renderOrdersTable);
+        document.getElementById('filter-status').addEventListener('change', renderOrdersTable);
+    </script>
+</body>
+</html>
