@@ -243,6 +243,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
     order_summaries = []
     item_details = []
     unmatched_invoice_items = []
+    invoice_row_matches = {}
     
     # Reconcile Supplier by Supplier
     sapo_by_supplier = df_sapo.groupby("MST_Supplier")
@@ -359,6 +360,17 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
             })
             
         # MULTI-PASS FIFO RECONCILIATION
+        def record_match(s_item, i_item, status_label, uom_applied=False):
+            s_item["matched"] = True
+            s_item["match_info"] = i_item
+            s_item["status"] = status_label
+            if uom_applied:
+                s_item["uom_conversion"] = 9
+            i_item["matched"] = True
+            invoice_row_matches[i_item["row_idx"]] = {
+                "sku": s_item["sku"],
+                "order_id": s_item["order_id"]
+            }
         
         # Pass 1: Perfect Match (Same model, same qty, close price)
         for s_item in sapo_items:
@@ -377,12 +389,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
-                        s_item["matched"] = True
-                        s_item["match_info"] = i_item
-                        s_item["status"] = "Khớp"
-                        if uom_applied:
-                            s_item["uom_conversion"] = 9
-                        i_item["matched"] = True
+                        record_match(s_item, i_item, "Khớp", uom_applied)
                         break
                         
         # Pass 2: Fuzzy Name Match (Same qty, similar names, close price)
@@ -402,12 +409,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
-                        s_item["matched"] = True
-                        s_item["match_info"] = i_item
-                        s_item["status"] = "Khớp"
-                        if uom_applied:
-                            s_item["uom_conversion"] = 9
-                        i_item["matched"] = True
+                        record_match(s_item, i_item, "Khớp", uom_applied)
                         break
 
         # Pass 2b: Significant Word Overlap (Same qty, significant word overlap, close price)
@@ -429,12 +431,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
-                        s_item["matched"] = True
-                        s_item["match_info"] = i_item
-                        s_item["status"] = "Khớp"
-                        if uom_applied:
-                            s_item["uom_conversion"] = 9
-                        i_item["matched"] = True
+                        record_match(s_item, i_item, "Khớp", uom_applied)
                         break
 
         # Pass 2c: Share Words >= 3 + Qty + Price Match (Fallback for items with different names but match in qty/price)
@@ -453,12 +450,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
-                        s_item["matched"] = True
-                        s_item["match_info"] = i_item
-                        s_item["status"] = "Khớp"
-                        if uom_applied:
-                            s_item["uom_conversion"] = 9
-                        i_item["matched"] = True
+                        record_match(s_item, i_item, "Khớp", uom_applied)
                         break
 
         # Pass 3: Price Discrepancy Match (Same model / similar name / word overlap, same qty, price differs > 5%)
@@ -482,12 +474,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 word_overlap = s_words.intersection(i_words)
                 
                 if len(overlap) > 0 or similarity >= 0.55 or len(word_overlap) > 0 or share_words(s_item["name"], i_item["name"]):
-                    s_item["matched"] = True
-                    s_item["match_info"] = i_item
-                    s_item["status"] = "Lệch đơn giá"
-                    if uom_applied:
-                        s_item["uom_conversion"] = 9
-                    i_item["matched"] = True
+                    record_match(s_item, i_item, "Lệch đơn giá", uom_applied)
                     break
                     
         # Pass 4: Quantity Discrepancy Match (Same model / similar name / word overlap, close price, but qty differs)
@@ -512,12 +499,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
-                        s_item["matched"] = True
-                        s_item["match_info"] = i_item
-                        s_item["status"] = "Lệch số lượng"
-                        if uom_applied:
-                            s_item["uom_conversion"] = 9
-                        i_item["matched"] = True
+                        record_match(s_item, i_item, "Lệch số lượng", uom_applied)
                         break
 
         # Save detailed reconciliation rows
@@ -636,7 +618,8 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
 
     # Return results as DataFrames
     return (
-        pd.DataFrame(order_summaries) if order_summaries else pd.DataFrame(columns=["order_id", "date", "supplier_code", "supplier_name", "mst", "total_incl", "total_excl", "status", "notes"]),
-        pd.DataFrame(item_details) if item_details else pd.DataFrame(columns=["order_id", "sku", "name", "qty", "price_excl", "total_excl", "invoice_no", "inv_name", "inv_qty", "inv_price", "inv_total", "status", "diff_qty", "diff_amt"]),
-        pd.DataFrame(unmatched_invoice_items) if unmatched_invoice_items else pd.DataFrame(columns=["mst", "supplier_name", "date", "invoice_no", "name", "qty", "price", "total"])
+        pd.DataFrame(order_summaries, columns=["order_id", "date", "supplier_code", "supplier_name", "mst", "total_incl", "total_excl", "status", "notes"]) if order_summaries else pd.DataFrame(columns=["order_id", "date", "supplier_code", "supplier_name", "mst", "total_incl", "total_excl", "status", "notes"]),
+        pd.DataFrame(item_details, columns=["order_id", "sku", "name", "qty", "price_excl", "total_excl", "invoice_no", "inv_name", "inv_qty", "inv_price", "inv_total", "status", "diff_qty", "diff_amt"]) if item_details else pd.DataFrame(columns=["order_id", "sku", "name", "qty", "price_excl", "total_excl", "invoice_no", "inv_name", "inv_qty", "inv_price", "inv_total", "status", "diff_qty", "diff_amt"]),
+        pd.DataFrame(unmatched_invoice_items, columns=["mst", "supplier_name", "date", "invoice_no", "name", "qty", "price", "total"]) if unmatched_invoice_items else pd.DataFrame(columns=["mst", "supplier_name", "date", "invoice_no", "name", "qty", "price", "total"]),
+        invoice_row_matches
     )
