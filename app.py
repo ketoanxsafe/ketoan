@@ -10,8 +10,7 @@ import io
 from reconciliation import reconcile_data, format_mst
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32MB Max Upload size
-UPLOAD_FOLDER = r"C:\Users\PRECISION\.gemini\antigravity\brain\579a9696-e4ba-44bd-a3b8-b2ed9ab797aa\scratch\uploads"
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def create_4sheet_export_workbook(df_orders, df_items, df_unmatched_inv, invoice_row_matches, invoice_path):

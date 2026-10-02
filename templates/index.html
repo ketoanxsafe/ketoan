@@ -403,11 +403,20 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().then(err => { throw new Error(err.error || 'Lỗi hệ thống') });
+            .then(async response => {
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.includes("application/json")) {
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Lỗi hệ thống khi đối chiếu dữ liệu.');
+                    }
+                    return data;
+                } else {
+                    if (response.status === 502 || response.status === 504) {
+                        throw new Error('Máy chủ phản hồi quá thời gian chờ (Timeout). Render gói miễn phí đang xử lý quá tải, vui lòng thử lại sau giây lát.');
+                    }
+                    throw new Error(`Máy chủ trả về phản hồi không hợp lệ (Mã: ${response.status}). Có thể hệ thống đang khởi động lại, vui lòng thử lại sau 30 giây.`);
                 }
-                return response.json();
             })
             .then(data => {
                 reconData = data;

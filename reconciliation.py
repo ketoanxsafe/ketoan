@@ -257,11 +257,14 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
             total_excl = total_incl - tax_val
             unit_price_excl = total_excl / qty if qty > 0 else 0.0
             
+            s_name = str(row["Tên phiên bản sản phẩm"])
+            s_sku = str(row["Mã SKU"])
+            
             sapo_items.append({
                 "row_idx": idx,
                 "order_id": str(row["Mã đơn nhập hàng"]),
-                "sku": str(row["Mã SKU"]),
-                "name": str(row["Tên phiên bản sản phẩm"]),
+                "sku": s_sku,
+                "name": s_name,
                 "qty": qty,
                 "unit_price_excl": unit_price_excl,
                 "total_excl": total_excl,
@@ -271,7 +274,10 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 "matched": False,
                 "match_info": None,
                 "uom_conversion": 1,
-                "status": "Chưa xuất hóa đơn"
+                "status": "Chưa xuất hóa đơn",
+                "codes": set(extract_model_codes(s_name) + extract_model_codes(s_sku)),
+                "words": extract_significant_words(s_name),
+                "words3": set(re.findall(r'\b\w{3,}\b', s_name.lower())) - {'cho', 'nha', 'của', 'với', 'cần', 'như', 'ghi', 'nhãn', 'thế'}
             })
             
         if mst == "":
@@ -343,26 +349,38 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
             continue
             
         inv_items = []
+        stop_words_3 = {'cho', 'nha', 'của', 'với', 'cần', 'như', 'ghi', 'nhãn', 'thế'}
         for idx, row in invoices_group.iterrows():
             qty = int(row["Số lượng"])
             total_excl = float(row["Thành tiền"])
             unit_price = float(row["Đơn giá"])
+            i_name = str(row["Tên hàng"])
             
             inv_items.append({
                 "row_idx": idx,
                 "invoice_id": str(row["Số hóa đơn"]),
-                "name": str(row["Tên hàng"]),
+                "name": i_name,
                 "qty": qty,
                 "unit_price": unit_price,
                 "total_excl": total_excl,
                 "date": row["Ngày hóa đơn_dt"],
-                "matched": False
+                "matched": False,
+                "codes": set(extract_model_codes(i_name)),
+                "words": extract_significant_words(i_name),
+                "words3": set(re.findall(r'\b\w{3,}\b', i_name.lower())) - stop_words_3
             })
             
-        # MULTI-PASS FIFO RECONCILIATION
-        def record_match(s_item, i_item, status_label, uom_applied=False):
+        def record_match(s_item, i_item, status_label, uom_applied=False, custom_qty=None, custom_price=None):
             s_item["matched"] = True
-            s_item["match_info"] = i_item
+            if custom_qty is not None:
+                match_view = dict(i_item)
+                match_view["qty"] = custom_qty
+                match_view["unit_price"] = custom_price if custom_price is not None else i_item["unit_price"]
+                match_view["total_excl"] = custom_qty * match_view["unit_price"]
+                s_item["match_info"] = match_view
+            else:
+                s_item["match_info"] = i_item
+                
             s_item["status"] = status_label
             if uom_applied:
                 s_item["uom_conversion"] = 9
@@ -372,9 +390,121 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 "order_id": s_item["order_id"]
             }
         
+        # ==============================================================
+        # PHASE 1: ORDER-TO-INVOICE MATCHING (Ưu tiên khớp trọn vẹn cấp Đơn hàng)
+        # ==============================================================
+        # Tránh lỗi FIFO: Khi có nhiều đơn hàng nhưng hóa đơn xuất cho đơn sau,
+        # nếu đơn sau và hóa đơn khớp giá trị/mặt hàng, ta ghép cặp chúng trước.
+        orders_dict = {}
+        for s in sapo_items:
+            orders_dict.setdefault(s["order_id"], []).append(s)
+            
+        invoices_dict = {}
+        for i in inv_items:
+            invoices_dict.setdefault(i["invoice_id"], []).append(i)
+            
+        # Tìm các cặp Đơn hàng - Hóa đơn khớp tổng tiền (< 500đ hoặc lệch thuế < 0.5%)
+        amount_pairs = []
+        for oid, o_item_list in orders_dict.items():
+            o_tot = sum(s["total_excl"] for s in o_item_list)
+            o_date = o_item_list[0]["date"]
+            for inum, i_item_list in invoices_dict.items():
+                i_tot = sum(i["total_excl"] for i in i_item_list)
+                i_date = i_item_list[0]["date"]
+                diff = abs(o_tot - i_tot)
+                if diff < 500 or (diff / i_tot < 0.005 if i_tot > 0 else False):
+                    days_diff = abs((o_date - i_date).days)
+                    amount_pairs.append({
+                        "order_id": oid,
+                        "invoice_id": inum,
+                        "diff": diff,
+                        "days_diff": days_diff,
+                        "o_tot": o_tot,
+                        "i_tot": i_tot
+                    })
+                    
+        # Ưu tiên cặp có độ lệch tiền nhỏ nhất, sau đó đến ngày gần nhất
+        amount_pairs.sort(key=lambda x: (x["diff"], x["days_diff"]))
+        
+        matched_orders_phase1 = set()
+        matched_invoices_phase1 = set()
+        
+        for pair in amount_pairs:
+            oid = pair["order_id"]
+            inum = pair["invoice_id"]
+            if oid in matched_orders_phase1 or inum in matched_invoices_phase1:
+                continue
+                
+            o_item_list = orders_dict[oid]
+            i_item_list = invoices_dict[inum]
+            
+            # Bước 1.1: Khớp chính xác mã model và số lượng trong cặp này
+            for s_item in o_item_list:
+                if s_item["matched"]: continue
+                s_codes = s_item["codes"]
+                for i_item in i_item_list:
+                    if i_item["matched"]: continue
+                    s_qty_c, s_price_c, i_qty_c, i_price_c, uom = get_compared_values(s_item, i_item)
+                    if s_qty_c != i_qty_c: continue
+                    if s_codes and s_codes.intersection(i_item["codes"]):
+                        if abs(s_price_c - i_price_c) < 500 or (abs(s_price_c - i_price_c) / i_price_c < 0.05 if i_price_c > 0 else False):
+                            record_match(s_item, i_item, "Khớp", uom)
+                            break
+
+            # Bước 1.2: Khớp tên tương tự / từ khóa trong cặp này
+            for s_item in o_item_list:
+                if s_item["matched"]: continue
+                for i_item in i_item_list:
+                    if i_item["matched"]: continue
+                    s_qty_c, s_price_c, i_qty_c, i_price_c, uom = get_compared_values(s_item, i_item)
+                    if s_qty_c != i_qty_c: continue
+                    is_match = (
+                        (s_item["words"] and s_item["words"].intersection(i_item["words"])) or
+                        (s_item["words3"] and s_item["words3"].intersection(i_item["words3"])) or
+                        get_name_similarity(s_item["name"], i_item["name"]) >= 0.55
+                    )
+                    if is_match:
+                        price_diff = abs(s_price_c - i_price_c)
+                        if price_diff < 500 or (price_diff / i_price_c < 0.05 if i_price_c > 0 else False):
+                            record_match(s_item, i_item, "Khớp", uom)
+                            break
+                            
+            # Bước 1.3: Xử lý hóa đơn gộp quy cách (nhiều dòng size/mã phụ gộp thành 1 dòng HĐ)
+            unmatched_s = [s for s in o_item_list if not s["matched"]]
+            unmatched_i = [i for i in i_item_list if not i["matched"]]
+            
+            for i_item in list(unmatched_i):
+                candidates = [
+                    s for s in unmatched_s 
+                    if abs(s["unit_price_excl"] - i_item["unit_price"]) < 500 or 
+                       (s["codes"] and s["codes"].intersection(i_item["codes"])) or
+                       (s["words3"] and s["words3"].intersection(i_item["words3"]))
+                ]
+                if sum(s["qty"] for s in candidates) == i_item["qty"]:
+                    for s_item in candidates:
+                        record_match(s_item, i_item, "Khớp", custom_qty=s_item["qty"], custom_price=i_item["unit_price"])
+                        unmatched_s.remove(s_item)
+                    unmatched_i.remove(i_item)
+                    
+            if len(unmatched_i) == 1 and len(unmatched_s) > 0:
+                i_item = unmatched_i[0]
+                if sum(s["qty"] for s in unmatched_s) == i_item["qty"]:
+                    for s_item in unmatched_s:
+                        record_match(s_item, i_item, "Khớp", custom_qty=s_item["qty"], custom_price=i_item["unit_price"])
+                    unmatched_s.clear()
+                    unmatched_i.clear()
+                    
+            matched_orders_phase1.add(oid)
+            matched_invoices_phase1.add(inum)
+
+        # ==============================================================
+        # PHASE 2: FIFO RECONCILIATION CHO CÁC MẶT HÀNG CÒN LẠI
+        # ==============================================================
         # Pass 1: Perfect Match (Same model, same qty, close price)
         for s_item in sapo_items:
-            s_codes = extract_model_codes(s_item["name"]) + extract_model_codes(s_item["sku"])
+            s_codes = s_item["codes"]
+            if not s_codes:
+                continue
             candidates = sorted(
                 [i for i in inv_items if not i["matched"]],
                 key=lambda x: abs((x["date"] - s_item["date"]).days)
@@ -383,9 +513,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 s_qty_c, s_price_c, i_qty_c, i_price_c, uom_applied = get_compared_values(s_item, i_item)
                 if s_qty_c != i_qty_c:
                     continue
-                i_codes = extract_model_codes(i_item["name"])
-                overlap = set(s_codes).intersection(set(i_codes))
-                if len(overlap) > 0:
+                if s_codes.intersection(i_item["codes"]):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
@@ -416,7 +544,9 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
         for s_item in sapo_items:
             if s_item["matched"]:
                 continue
-            s_words = extract_significant_words(s_item["name"])
+            s_words = s_item["words"]
+            if not s_words:
+                continue
             candidates = sorted(
                 [i for i in inv_items if not i["matched"]],
                 key=lambda x: abs((x["date"] - s_item["date"]).days)
@@ -425,9 +555,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 s_qty_c, s_price_c, i_qty_c, i_price_c, uom_applied = get_compared_values(s_item, i_item)
                 if s_qty_c != i_qty_c:
                     continue
-                i_words = extract_significant_words(i_item["name"])
-                word_overlap = s_words.intersection(i_words)
-                if len(word_overlap) > 0:
+                if s_words.intersection(i_item["words"]):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
@@ -438,6 +566,9 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
         for s_item in sapo_items:
             if s_item["matched"]:
                 continue
+            s_words3 = s_item["words3"]
+            if not s_words3:
+                continue
             candidates = sorted(
                 [i for i in inv_items if not i["matched"]],
                 key=lambda x: abs((x["date"] - s_item["date"]).days)
@@ -446,7 +577,7 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 s_qty_c, s_price_c, i_qty_c, i_price_c, uom_applied = get_compared_values(s_item, i_item)
                 if s_qty_c != i_qty_c:
                     continue
-                if share_words(s_item["name"], i_item["name"]):
+                if s_words3.intersection(i_item["words3"]):
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
@@ -457,8 +588,9 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
         for s_item in sapo_items:
             if s_item["matched"]:
                 continue
-            s_codes = extract_model_codes(s_item["name"]) + extract_model_codes(s_item["sku"])
-            s_words = extract_significant_words(s_item["name"])
+            s_codes = s_item["codes"]
+            s_words = s_item["words"]
+            s_words3 = s_item["words3"]
             candidates = sorted(
                 [i for i in inv_items if not i["matched"]],
                 key=lambda x: abs((x["date"] - s_item["date"]).days)
@@ -467,13 +599,13 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
                 s_qty_c, s_price_c, i_qty_c, i_price_c, uom_applied = get_compared_values(s_item, i_item)
                 if s_qty_c != i_qty_c:
                     continue
-                i_codes = extract_model_codes(i_item["name"])
-                i_words = extract_significant_words(i_item["name"])
-                overlap = set(s_codes).intersection(set(i_codes))
-                similarity = get_name_similarity(s_item["name"], i_item["name"])
-                word_overlap = s_words.intersection(i_words)
-                
-                if len(overlap) > 0 or similarity >= 0.55 or len(word_overlap) > 0 or share_words(s_item["name"], i_item["name"]):
+                is_candidate = (
+                    bool(s_codes and s_codes.intersection(i_item["codes"])) or
+                    bool(s_words and s_words.intersection(i_item["words"])) or
+                    bool(s_words3 and s_words3.intersection(i_item["words3"])) or
+                    (get_name_similarity(s_item["name"], i_item["name"]) >= 0.55)
+                )
+                if is_candidate:
                     record_match(s_item, i_item, "Lệch đơn giá", uom_applied)
                     break
                     
@@ -481,21 +613,22 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
         for s_item in sapo_items:
             if s_item["matched"]:
                 continue
-            s_codes = extract_model_codes(s_item["name"]) + extract_model_codes(s_item["sku"])
-            s_words = extract_significant_words(s_item["name"])
+            s_codes = s_item["codes"]
+            s_words = s_item["words"]
+            s_words3 = s_item["words3"]
             candidates = sorted(
                 [i for i in inv_items if not i["matched"]],
                 key=lambda x: abs((x["date"] - s_item["date"]).days)
             )
             for i_item in candidates:
                 s_qty_c, s_price_c, i_qty_c, i_price_c, uom_applied = get_compared_values(s_item, i_item)
-                i_codes = extract_model_codes(i_item["name"])
-                i_words = extract_significant_words(i_item["name"])
-                overlap = set(s_codes).intersection(set(i_codes))
-                similarity = get_name_similarity(s_item["name"], i_item["name"])
-                word_overlap = s_words.intersection(i_words)
-                
-                if len(overlap) > 0 or similarity >= 0.55 or len(word_overlap) > 0 or share_words(s_item["name"], i_item["name"]):
+                is_candidate = (
+                    bool(s_codes and s_codes.intersection(i_item["codes"])) or
+                    bool(s_words and s_words.intersection(i_item["words"])) or
+                    bool(s_words3 and s_words3.intersection(i_item["words3"])) or
+                    (get_name_similarity(s_item["name"], i_item["name"]) >= 0.55)
+                )
+                if is_candidate:
                     price_diff = abs(s_price_c - i_price_c)
                     price_ratio = price_diff / i_price_c if i_price_c > 0 else 0
                     if price_ratio < 0.05 or price_diff < 500:
@@ -584,10 +717,14 @@ def reconcile_data(sapo_file, supplier_file, invoice_file):
             
             if all("Khớp" in stat for stat in order_items_status):
                 status = "Khớp"
-                notes = "Hóa đơn và số lượng khớp hoàn toàn."
+                inv_nos = list(set(str(it["invoice_no"]).strip() for it in order_rows if str(it["invoice_no"]).strip()))
+                if inv_nos:
+                    notes = f"Khớp hoàn toàn với HĐ số: {', '.join(inv_nos)}."
+                else:
+                    notes = "Hóa đơn và số lượng khớp hoàn toàn."
             elif all(stat == "Chưa xuất hóa đơn" for stat in order_items_status):
                 status = "Chưa xuất hóa đơn"
-                notes = "Chưa tìm thấy hóa đơn phù hợp."
+                notes = "Toàn bộ sản phẩm trong đơn chưa có hóa đơn."
             else:
                 status = "Lệch"
                 mismatch_reasons = []
